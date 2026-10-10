@@ -215,3 +215,109 @@ resource "aws_iam_role_policy" "infra_ci" {
 output "infra_ci_role_arn" {
   value = aws_iam_role.infra_ci.arn
 }
+
+# --- App deploy roles (one per app repo) ---
+locals {
+  apps = {
+    s3-service = {
+      repo = "coaching-18-s3-app"
+      ecr  = "${local.prefix}-s3-app"
+    }
+    sqs-service = {
+      repo = "coaching-18-sqs-app"
+      ecr  = "${local.prefix}-sqs-app"
+    }
+  }
+}
+
+data "aws_iam_policy_document" "app_trust" {
+  for_each = local.apps
+
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [data.aws_iam_openid_connect_provider.github.arn]
+    }
+
+    condition {
+      test     = "StringLike"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = ["repo:yqyeoh*/${each.value.repo}*:*"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "app_deploy" {
+  for_each = local.apps
+
+  name               = "${local.prefix}-${each.key}-deploy"
+  assume_role_policy = data.aws_iam_policy_document.app_trust[each.key].json
+}
+
+data "aws_iam_policy_document" "app_deploy" {
+  for_each = local.apps
+
+  statement {
+    sid       = "EcrLogin" # doesn't support resource-level scoping
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid = "EcrPush"
+    actions = [
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:InitiateLayerUpload",
+      "ecr:UploadLayerPart",
+      "ecr:CompleteLayerUpload",
+      "ecr:PutImage",
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
+    ]
+    resources = ["arn:aws:ecr:${local.region}:${local.account_id}:repository/${each.value.ecr}"]
+  }
+
+  statement {
+    sid       = "EcsTaskDefinition" # doesn't support resource-level scoping
+    actions   = ["ecs:DescribeTaskDefinition", "ecs:RegisterTaskDefinition"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "EcsDeploy"
+    actions   = ["ecs:UpdateService", "ecs:DescribeServices"]
+    resources = ["arn:aws:ecs:${local.region}:${local.account_id}:service/${local.prefix}-ecs/${each.key}"]
+  }
+
+  statement {
+    sid       = "PassTaskRoles"
+    actions   = ["iam:PassRole"]
+    resources = ["arn:aws:iam::${local.account_id}:role/${each.key}-*"]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "app_deploy" {
+  for_each = local.apps
+
+  name   = "${local.prefix}-${each.key}-deploy"
+  role   = aws_iam_role.app_deploy[each.key].id
+  policy = data.aws_iam_policy_document.app_deploy[each.key].json
+}
+
+output "app_deploy_role_arns" {
+  value = { for k, r in aws_iam_role.app_deploy : k => r.arn }
+}
