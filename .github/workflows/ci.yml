@@ -1,0 +1,43 @@
+name: Terraform CI
+run-name: Terraform plan by ${{ github.actor }}
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  id-token: write # required to request the GitHub OIDC token
+  contents: read
+
+concurrency:
+  group: terraform-coaching-18
+  cancel-in-progress: false
+
+jobs:
+  terraform-plan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.OIDC_ROLE }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Terraform init
+        run: terraform init
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Terraform validate
+        run: terraform validate -no-color
+
+      - name: Terraform plan
+        run: terraform plan -no-color
