@@ -26,8 +26,9 @@ module "ecs" {
 
   services = {
     s3-service = {
-      cpu    = 256
-      memory = 512
+      cpu                = 256
+      memory             = 512
+      enable_autoscaling = false
 
       container_definitions = {
         s3-app = {
@@ -61,8 +62,9 @@ module "ecs" {
     }
 
     sqs-service = {
-      cpu    = 256
-      memory = 512
+      cpu                = 256
+      memory             = 512
+      enable_autoscaling = false
 
       container_definitions = {
         sqs-app = {
